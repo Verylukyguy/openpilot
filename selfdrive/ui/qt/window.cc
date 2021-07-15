@@ -1,162 +1,93 @@
-#include <cassert>
-#include <iostream>
-#include <cmath>
-#include <iostream>
-#include <fstream>
-#include <future>
-#include <signal.h>
+#include "selfdrive/ui/qt/window.h"
 
-#include <QVBoxLayout>
-#include <QMouseEvent>
-#include <QPushButton>
-#include <QGridLayout>
+#include <QFontDatabase>
 
-#include "window.hpp"
-#include "settings.hpp"
-
-#include "paint.hpp"
-#include "common/util.h"
-
-volatile sig_atomic_t do_exit = 0;
+#include "selfdrive/hardware/hw.h"
 
 MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
-  main_layout = new QStackedLayout;
-
-#ifdef QCOM2
-  set_core_affinity(7);
-#endif
-
-  GLWindow * glWindow = new GLWindow(this);
-  main_layout->addWidget(glWindow);
-
-  SettingsWindow * settingsWindow = new SettingsWindow(this);
-  main_layout->addWidget(settingsWindow);
-
-
+  main_layout = new QStackedLayout(this);
   main_layout->setMargin(0);
-  setLayout(main_layout);
-  QObject::connect(glWindow, SIGNAL(openSettings()), this, SLOT(openSettings()));
-  QObject::connect(settingsWindow, SIGNAL(closeSettings()), this, SLOT(closeSettings()));
 
+  onboardingWindow = new OnboardingWindow(this);
+  main_layout->addWidget(onboardingWindow);
+  QObject::connect(onboardingWindow, &OnboardingWindow::onboardingDone, [=]() {
+    main_layout->setCurrentWidget(homeWindow);
+  });
+
+  homeWindow = new HomeWindow(this);
+  main_layout->addWidget(homeWindow);
+  QObject::connect(homeWindow, &HomeWindow::openSettings, this, &MainWindow::openSettings);
+  QObject::connect(homeWindow, &HomeWindow::closeSettings, this, &MainWindow::closeSettings);
+  QObject::connect(&qs, &QUIState::uiUpdate, homeWindow, &HomeWindow::update);
+  QObject::connect(&qs, &QUIState::offroadTransition, homeWindow, &HomeWindow::offroadTransition);
+  QObject::connect(&qs, &QUIState::offroadTransition, homeWindow, &HomeWindow::offroadTransitionSignal);
+  QObject::connect(&device, &Device::displayPowerChanged, homeWindow, &HomeWindow::displayPowerChanged);
+
+  settingsWindow = new SettingsWindow(this);
+  main_layout->addWidget(settingsWindow);
+  QObject::connect(settingsWindow, &SettingsWindow::closeSettings, this, &MainWindow::closeSettings);
+  QObject::connect(&qs, &QUIState::offroadTransition, settingsWindow, &SettingsWindow::offroadTransition);
+  QObject::connect(settingsWindow, &SettingsWindow::reviewTrainingGuide, [=]() {
+    main_layout->setCurrentWidget(onboardingWindow);
+  });
+  QObject::connect(settingsWindow, &SettingsWindow::showDriverView, [=] {
+    homeWindow->showDriverView(true);
+  });
+
+  device.setAwake(true, true);
+  QObject::connect(&qs, &QUIState::uiUpdate, &device, &Device::update);
+  QObject::connect(&qs, &QUIState::offroadTransition, [=](bool offroad) {
+    if (!offroad) {
+      closeSettings();
+    }
+  });
+  QObject::connect(&device, &Device::displayPowerChanged, [=]() {
+     if(main_layout->currentWidget() != onboardingWindow) {
+       closeSettings();
+     }
+  });
+
+  // load fonts
+  QFontDatabase::addApplicationFont("../assets/fonts/opensans_regular.ttf");
+  QFontDatabase::addApplicationFont("../assets/fonts/opensans_bold.ttf");
+  QFontDatabase::addApplicationFont("../assets/fonts/opensans_semibold.ttf");
+
+  // no outline to prevent the focus rectangle
   setStyleSheet(R"(
     * {
-      color: white;
-      background-color: #072339;
+      font-family: Inter;
+      outline: none;
     }
   )");
 }
 
 void MainWindow::openSettings() {
-  main_layout->setCurrentIndex(1);
+  main_layout->setCurrentWidget(settingsWindow);
 }
 
 void MainWindow::closeSettings() {
-  main_layout->setCurrentIndex(0);
-}
+  main_layout->setCurrentWidget(homeWindow);
 
-
-GLWindow::GLWindow(QWidget *parent) : QOpenGLWidget(parent) {
-  timer = new QTimer(this);
-  QObject::connect(timer, SIGNAL(timeout()), this, SLOT(timerUpdate()));
-
-  int result = read_param(&brightness_b, "BRIGHTNESS_B", true);
-  result += read_param(&brightness_m, "BRIGHTNESS_M", true);
-  if(result != 0) {
-    brightness_b = 0.0;
-    brightness_m = 5.0;
+  if (QUIState::ui_state.scene.started) {
+    emit homeWindow->showSidebar(false);
   }
-  smooth_brightness = 512;
 }
 
-GLWindow::~GLWindow() {
-  makeCurrent();
-  doneCurrent();
-}
-
-void GLWindow::initializeGL() {
-  initializeOpenGLFunctions();
-  std::cout << "OpenGL version: " << glGetString(GL_VERSION) << std::endl;
-  std::cout << "OpenGL vendor: " << glGetString(GL_VENDOR) << std::endl;
-  std::cout << "OpenGL renderer: " << glGetString(GL_RENDERER) << std::endl;
-  std::cout << "OpenGL language version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
-
-  ui_state = new UIState();
-  ui_state->sound = &sound;
-  ui_state->fb_w = vwp_w;
-  ui_state->fb_h = vwp_h;
-  ui_init(ui_state);
-
-  timer->start(50);
-}
-
-void GLWindow::timerUpdate(){
-  // Update brightness
-  float clipped_brightness = std::min(1023.0f, (ui_state->light_sensor*brightness_m) + brightness_b);
-  smooth_brightness = clipped_brightness * 0.01f + smooth_brightness * 0.99f;
-  int brightness = smooth_brightness;
-
-
-#ifdef QCOM2
-  if (ui_state->started != onroad){
-    onroad = ui_state->started;
-    timer->setInterval(onroad ? 50 : 1000);
+bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
+  // wake screen on tap
+  if (event->type() == QEvent::MouseButtonPress) {
+    device.setAwake(true, true);
   }
 
-  if (!ui_state->started){
-    brightness = 0;
+#ifdef QCOM
+  // filter out touches while in android activity
+  const static QSet<QEvent::Type> filter_events({QEvent::MouseButtonPress, QEvent::MouseMove, QEvent::TouchBegin, QEvent::TouchUpdate, QEvent::TouchEnd});
+  if (HardwareEon::launched_activity && filter_events.contains(event->type())) {
+    HardwareEon::check_activity();
+    if (HardwareEon::launched_activity) {
+      return true;
+    }
   }
 #endif
-
-  std::async(std::launch::async,
-             [brightness]{
-               std::ofstream brightness_control("/sys/class/backlight/panel0-backlight/brightness");
-               if (brightness_control.is_open()){
-                 brightness_control << brightness << "\n";
-                 brightness_control.close();
-               }
-             });
-
-
-  ui_update(ui_state);
-  update();
-}
-
-void GLWindow::resizeGL(int w, int h) {
-  std::cout << "resize " << w << "x" << h << std::endl;
-}
-
-void GLWindow::paintGL() {
-  ui_draw(ui_state);
-}
-
-void GLWindow::mousePressEvent(QMouseEvent *e) {
-  // Settings button click
-  if (!ui_state->scene.uilayout_sidebarcollapsed && settings_btn.ptInRect(e->x(), e->y())) {
-    emit openSettings();
-  }
-
-  // Vision click
-  if (ui_state->started && (e->x() >= ui_state->scene.viz_rect.x - bdr_s)){
-    ui_state->scene.uilayout_sidebarcollapsed = !ui_state->scene.uilayout_sidebarcollapsed;
-  }
-}
-
-
-GLuint visionimg_to_gl(const VisionImg *img, EGLImageKHR *pkhr, void **pph) {
-  unsigned int texture;
-  glGenTextures(1, &texture);
-  glBindTexture(GL_TEXTURE_2D, texture);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, img->width, img->height, 0, GL_RGB, GL_UNSIGNED_BYTE, *pph);
-  glGenerateMipmap(GL_TEXTURE_2D);
-  *pkhr = (EGLImageKHR)1; // not NULL
-  return texture;
-}
-
-void visionimg_destroy_gl(EGLImageKHR khr, void *ph) {
-  // empty
-}
-
-FramebufferState* framebuffer_init(const char* name, int32_t layer, int alpha,
-                                   int *out_w, int *out_h) {
-  return (FramebufferState*)1; // not null
+  return false;
 }

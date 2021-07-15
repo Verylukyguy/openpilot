@@ -56,12 +56,21 @@ class MockParams():
   def __init__(self):
     self.params = {
       "DongleId": b"0000000000000000",
-      "IsUploadRawEnabled": b"1",
+      "UploadRaw": b"1",
       "IsOffroad": b"1",
     }
 
-  def get(self, k):
-    return self.params[k]
+  def get(self, k, block=False, encoding=None):
+    val = self.params[k]
+
+    if encoding is not None:
+      return val.decode(encoding)
+    else:
+      return val
+
+  def get_bool(self, k):
+    val = self.params[k]
+    return (val == b'1')
 
 class UploaderTestCase(unittest.TestCase):
   f_type = "UNKNOWN"
@@ -74,9 +83,9 @@ class UploaderTestCase(unittest.TestCase):
     uploader.ROOT = self.root  # Monkey patch root dir
     uploader.Api = MockApi
     uploader.Params = MockParams
-    uploader.fake_upload = 1
-    uploader.is_on_hotspot = lambda *args: False
-    uploader.is_on_wifi = lambda *args: True
+    uploader.fake_upload = True
+    uploader.force_wifi = True
+    uploader.allow_sleep = False
     self.seg_num = random.randint(1, 300)
     self.seg_format = "2019-04-18--12-52-54--{}"
     self.seg_format2 = "2019-05-18--11-22-33--{}"

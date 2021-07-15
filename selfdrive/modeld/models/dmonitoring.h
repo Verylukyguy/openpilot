@@ -1,15 +1,13 @@
 #pragma once
+
 #include <vector>
-#include "common/util.h"
-#include "commonmodel.h"
-#include "runners/run.h"
-#include "messaging.hpp"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "cereal/messaging/messaging.h"
+#include "selfdrive/common/util.h"
+#include "selfdrive/modeld/models/commonmodel.h"
+#include "selfdrive/modeld/runners/run.h"
 
-#define OUTPUT_SIZE 34
+#define OUTPUT_SIZE 38
 
 typedef struct DMonitoringResult {
   float face_orientation[3];
@@ -22,6 +20,11 @@ typedef struct DMonitoringResult {
   float left_blink_prob;
   float right_blink_prob;
   float sg_prob;
+  float poor_vision;
+  float partial_face;
+  float distracted_pose;
+  float distracted_eyes;
+  float dsp_execution_time;
 } DMonitoringResult;
 
 typedef struct DMonitoringModelState {
@@ -36,10 +39,6 @@ typedef struct DMonitoringModelState {
 
 void dmonitoring_init(DMonitoringModelState* s);
 DMonitoringResult dmonitoring_eval_frame(DMonitoringModelState* s, void* stream_buf, int width, int height);
-void dmonitoring_publish(PubMaster &pm, uint32_t frame_id, const DMonitoringResult &res);
+void dmonitoring_publish(PubMaster &pm, uint32_t frame_id, const DMonitoringResult &res, float execution_time, kj::ArrayPtr<const float> raw_pred);
 void dmonitoring_free(DMonitoringModelState* s);
-
-#ifdef __cplusplus
-}
-#endif
 

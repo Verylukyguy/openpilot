@@ -5,30 +5,44 @@ import sys
 from typing import Any
 
 from selfdrive.car.car_helpers import interface_names
+from selfdrive.test.openpilotci import get_url
 from selfdrive.test.process_replay.compare_logs import compare_logs
 from selfdrive.test.process_replay.process_replay import CONFIGS, replay_process
 from tools.lib.logreader import LogReader
 
-INJECT_MODEL = 0
 
-segments = [
-  ("HONDA", "0375fdf7b1ce594d|2019-06-13--08-32-25--3"),      # HONDA.ACCORD
-  ("HONDA", "99c94dc769b5d96e|2019-08-03--14-19-59--2"),      # HONDA.CIVIC
-  ("TOYOTA", "77611a1fac303767|2020-02-29--13-29-33--3"),     # TOYOTA.COROLLA_TSS2
-  ("GM", "7cc2a8365b4dd8a9|2018-12-02--12-10-44--2"),         # GM.ACADIA
-  ("CHRYSLER", "b6849f5cf2c926b1|2020-02-28--07-29-48--13"),  # CHRYSLER.PACIFICA
-  ("HYUNDAI", "5b7c365c50084530|2020-04-15--16-13-24--3"),    # HYUNDAI.SONATA
-  #("CHRYSLER", "b6e1317e1bfbefa6|2020-03-04--13-11-40"),   # CHRYSLER.JEEP_CHEROKEE
-  ("SUBARU", "7873afaf022d36e2|2019-07-03--18-46-44--0"),     # SUBARU.IMPREZA
-  ("VOLKSWAGEN", "76b83eb0245de90e|2020-03-05--19-16-05--3"),  # VW.GOLF
-  ("NISSAN", "fbbfa6af821552b9|2020-03-03--08-09-43--0"),     # NISSAN.XTRAIL
+original_segments = [
+  ("HYUNDAI", "02c45f73a2e5c6e9|2021-01-01--19-08-22--1"),     # HYUNDAI.SONATA
+  ("TOYOTA", "0982d79ebb0de295|2021-01-04--17-13-21--13"),     # TOYOTA.PRIUS (INDI)
+  ("TOYOTA2", "0982d79ebb0de295|2021-01-03--20-03-36--6"),     # TOYOTA.RAV4  (LQR)
+  ("HONDA", "eb140f119469d9ab|2021-06-12--10-46-24--27"),       # HONDA.CIVIC (NIDEC)
+  ("HONDA2", "7d2244f34d1bbcda|2021-06-25--12-25-37--26"),      # HONDA.ACCORD (BOSCH)
+  ("CHRYSLER", "4deb27de11bee626|2021-02-20--11-28-55--8"),   # CHRYSLER.PACIFICA
+  ("SUBARU", "4d70bc5e608678be|2021-01-15--17-02-04--5"),      # SUBARU.IMPREZA
+  ("GM", "0c58b6a25109da2b|2021-02-23--16-35-50--11"),          # GM.VOLT
+  ("NISSAN", "35336926920f3571|2021-02-12--18-38-48--46"),      # NISSAN.XTRAIL
+  ("VOLKSWAGEN", "de9592456ad7d144|2021-06-29--11-00-15--6"),  # VOLKSWAGEN.GOLF
 
   # Enable when port is tested and dascamOnly is no longer set
   #("MAZDA", "32a319f057902bb3|2020-04-27--15-18-58--2"),      # MAZDA.CX5
+  #("TESLA", "bb50caf5f0945ab1|2021-06-19--17-20-18--3"),      # TESLA.AP2_MODELS
 ]
 
-# ford doesn't need to be tested until a full port is done
-excluded_interfaces = ["mock", "ford", "mazda"]
+segments = [
+  ("HYUNDAI", "fakedata|2021-07-09--16-01-34--0"),
+  ("TOYOTA", "fakedata|2021-07-09--16-02-45--0"),
+  ("TOYOTA2", "fakedata|2021-07-09--16-03-56--0"),
+  ("HONDA", "fakedata|2021-07-09--16-05-07--0"),
+  ("HONDA2", "fakedata|2021-07-09--16-08-28--0"),
+  ("CHRYSLER", "fakedata|2021-07-09--16-09-39--0"),
+  ("SUBARU", "fakedata|2021-07-09--16-10-50--0"),
+  ("GM", "fakedata|2021-07-09--16-13-53--0"),
+  ("NISSAN", "fakedata|2021-07-09--16-17-35--0"),
+  ("VOLKSWAGEN", "fakedata|2021-07-09--16-29-13--0"),
+]
+
+# dashcamOnly makes don't need to be tested until a full port is done
+excluded_interfaces = ["mock", "ford", "mazda", "tesla"]
 
 BASE_URL = "https://commadataci.blob.core.windows.net/openpilotci/"
 
@@ -36,25 +50,14 @@ BASE_URL = "https://commadataci.blob.core.windows.net/openpilotci/"
 FULL_TEST = len(sys.argv) <= 1
 
 
-def get_segment(segment_name, original=True):
-  route_name, segment_num = segment_name.rsplit("--", 1)
-  if original:
-    rlog_url = BASE_URL + "%s/%s/rlog.bz2" % (route_name.replace("|", "/"), segment_num)
-  else:
-    process_replay_dir = os.path.dirname(os.path.abspath(__file__))
-    model_ref_commit = open(os.path.join(process_replay_dir, "model_ref_commit")).read().strip()
-    rlog_url = BASE_URL + "%s/%s/rlog_%s.bz2" % (route_name.replace("|", "/"), segment_num, model_ref_commit)
-
-  return rlog_url
-
-
 def test_process(cfg, lr, cmp_log_fn, ignore_fields=None, ignore_msgs=None):
   if ignore_fields is None:
     ignore_fields = []
   if ignore_msgs is None:
     ignore_msgs = []
-  url = BASE_URL + os.path.basename(cmp_log_fn)
-  cmp_log_msgs = list(LogReader(url))
+
+  cmp_log_path = cmp_log_fn if os.path.exists(cmp_log_fn) else BASE_URL + os.path.basename(cmp_log_fn)
+  cmp_log_msgs = list(LogReader(cmp_log_path))
 
   log_msgs = replay_process(cfg, lr)
 
@@ -151,8 +154,8 @@ if __name__ == "__main__":
 
     results[segment] = {}
 
-    rlog_fn = get_segment(segment)
-    lr = LogReader(rlog_fn)
+    r, n = segment.rsplit("--", 1)
+    lr = LogReader(get_url(r, n))
 
     for cfg in CONFIGS:
       if (procs_whitelisted and cfg.proc_name not in args.whitelist_procs) or \
@@ -167,9 +170,11 @@ if __name__ == "__main__":
     f.write(diff2)
   print(diff1)
 
-  print("TEST", "FAILED" if failed else "SUCCEEDED")
-
-  print("\n\nTo update the reference logs for this test run:")
-  print("./update_refs.py")
+  if failed:
+    print("TEST FAILED")
+    print("\n\nTo update the reference logs for this test run:")
+    print("./update_refs.py")
+  else:
+    print("TEST SUCCEEDED")
 
   sys.exit(int(failed))

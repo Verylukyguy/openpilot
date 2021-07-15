@@ -1,25 +1,26 @@
+#include <dirent.h>
+#include <sys/resource.h>
+#include <sys/time.h>
+
+#include <algorithm>
+#include <cassert>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
-#include <climits>
-#include <cassert>
-
-#include <unistd.h>
-#include <dirent.h>
-#include <memory>
-#include <utility>
-#include <sstream>
 #include <fstream>
-#include <algorithm>
 #include <functional>
+#include <memory>
+#include <sstream>
 #include <unordered_map>
+#include <utility>
 
-#include "messaging.hpp"
+#include "cereal/messaging/messaging.h"
+#include "selfdrive/common/timing.h"
+#include "selfdrive/common/util.h"
 
-#include "common/timing.h"
-#include "common/utilpp.h"
+ExitHandler do_exit;
 
 namespace {
-
 struct ProcCache {
   std::string name;
   std::vector<std::string> cmdline;
@@ -29,6 +30,8 @@ struct ProcCache {
 }
 
 int main() {
+  setpriority(PRIO_PROCESS, 0, -15);
+
   PubMaster publisher({"procLog"});
 
   double jiffy = sysconf(_SC_CLK_TCK);
@@ -36,7 +39,7 @@ int main() {
 
   std::unordered_map<pid_t, ProcCache> proc_cache;
 
-  while (1) {
+  while (!do_exit) {
 
     MessageBuilder msg;
     auto procLog = msg.initEvent().initProcLog();
@@ -223,7 +226,7 @@ int main() {
 
     publisher.send("procLog", msg);
 
-    usleep(2000000); // 2 secs
+    util::sleep_for(2000); // 2 secs
   }
 
   return 0;
